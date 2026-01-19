@@ -105,3 +105,9 @@ class MeshClient:
             res = await self.mc.commands.get_msg()
             if res.type == EventType.NO_MORE_MSGS or res.type == EventType.ERROR:
                 break
+            
+            # Dispatch based on type
+            if res.type == EventType.CONTACT_MSG_RECV:
+                await self._handle_contact_msg(res)
+            elif res.type == EventType.CHANNEL_MSG_RECV:
+                await self._handle_channel_msg(res)

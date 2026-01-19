@@ -52,6 +52,8 @@ python -m meshrc --address <DEVICE_ADDRESS>
 |-p, --port PORT         | TCP port                        |
 |-a, --address ADDRESS   | BLE device address              |
 |--log LOG               | Log file path (JSON format)     |
+|--logdb DBPATH          | Log SQLite database             |
+
 
 ## Controls
 

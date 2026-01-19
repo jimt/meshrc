@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+import sqlite3
 
 from meshcore import MeshCore
 from textual.app import App, ComposeResult
@@ -325,7 +326,9 @@ class MeshrcApp(App):
 
     def _log_message(self, msg_data: dict):
         log_file = self.connection_args.get("log_file")
-        if not log_file:
+        log_db = self.connection_args.get("log_db")
+        
+        if not log_file and not log_db:
             return
 
         try:
@@ -360,11 +363,40 @@ class MeshrcApp(App):
                 if key in log_entry:
                     del log_entry[key]
 
-            with open(log_file, "a") as f:
-                f.write(json.dumps(log_entry) + "\n")
+            # Write to JSON File
+            if log_file:
+                with open(log_file, "a") as f:
+                    f.write(json.dumps(log_entry) + "\n")
+            
+            # Write to SQLite DB
+            if log_db:
+                self._write_log_db(log_db, log_entry)
 
         except Exception as e:
             self.notify(f"Logging failed: {e}", severity="error")
+
+    def _write_log_db(self, db_path, log_entry):
+        try:
+            with sqlite3.connect(db_path) as conn:
+                # Prepare data
+                # Schema: timestamp, sender, name, text, type, channel_idx, pubkey_prefix, raw_json
+                timestamp = log_entry.get("timestamp")
+                sender = log_entry.get("sender")
+                name = log_entry.get("name")
+                text = log_entry.get("text")
+                msg_type = log_entry.get("type")
+                channel_idx = log_entry.get("channel_idx")
+                pubkey_prefix = log_entry.get("pubkey_prefix")
+                raw_json = json.dumps(log_entry)
+                
+                conn.execute(
+                    "INSERT INTO msgs (timestamp, sender, name, text, type, channel_idx, pubkey_prefix, raw_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (timestamp, sender, name, text, msg_type, channel_idx, pubkey_prefix, raw_json)
+                )
+        except Exception as e:
+            self.notify(f"DB Logging failed: {e}", severity="error")
+
+
 
     def _get_active_id(self):
         if self.active_recipient is None:
