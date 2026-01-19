@@ -4,6 +4,8 @@ A [Textual](https://textual.textualize.io)-based TUI for MeshCore,
 providing an IRC-like interface for [MeshCore](https://meshcore.co.uk)
 devices.
 
+![MeshRC Screenshot](assets/MeshRC.png)
+
 ## Features
 
 - **IRC-like Interface**: Split view with Sidebar (Channels/Contacts) and Main Chat.

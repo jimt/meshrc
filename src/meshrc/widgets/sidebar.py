@@ -1,9 +1,11 @@
 from typing import Any
 
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.app import ComposeResult
+from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import Button, Input, Label, ListItem, ListView, Static
+from textual.message import Message
 
 
 class ContactItem(ListItem):
@@ -56,10 +58,10 @@ class ContactItem(ListItem):
     unread_count = reactive(0)
     is_favorite = reactive(False)
 
-    def __init__(self, label: str, id: str = None, favorite: bool = False) -> None:
+    def __init__(self, label: str, id: str = None, favorite: bool = False, key: str = "") -> None:
         super().__init__(id=id)
         self.label_text = label
-        self.tooltip = label
+        self.tooltip = f"{label}\n{key}" if key else label
         self.is_favorite = favorite
 
     def compose(self) -> ComposeResult:
@@ -111,12 +113,65 @@ class SidebarHeader(ListItem):
     }
     """
 
-    def __init__(self, label: str) -> None:
+class SidebarHeader(ListItem):
+    """A non-selectable header item for the unified list."""
+
+    DEFAULT_CSS = """
+    SidebarHeader {
+        background: $primary-darken-2;
+        color: $text;
+        height: auto;
+        padding: 0 1; 
+    }
+    
+    SidebarHeader > Horizontal {
+        height: 1;
+        align: left middle;
+    }
+
+    SidebarHeader Label {
+        text-style: bold;
+        width: 1fr;
+    }
+
+    SidebarHeader Button {
+        min-width: 3;
+        width: auto;
+        height: 1;
+        background: transparent;
+        border: none;
+        color: $text-muted;
+    }
+    SidebarHeader Button:hover {
+        color: $text;
+        background: $primary;
+    }
+    """
+
+    class AddChannel(Message):
+        pass
+
+    class DeleteChannel(Message):
+        pass
+
+    def __init__(self, label: str, show_controls: bool = False) -> None:
         super().__init__(disabled=True)
         self.label = label
+        self.show_controls = show_controls
 
     def compose(self) -> ComposeResult:
-        yield Label(self.label)
+        with Horizontal():
+            yield Label(self.label)
+            if self.show_controls:
+                yield Button("-", id="remove_channel_btn", variant="error")
+                yield Button("+", id="add_channel_btn", variant="success")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "add_channel_btn":
+            self.post_message(self.AddChannel())
+        elif event.button.id == "remove_channel_btn":
+            self.post_message(self.DeleteChannel())
+        event.stop()
 
 
 class Sidebar(Vertical):
@@ -137,12 +192,6 @@ class Sidebar(Vertical):
         border: none;
         background: $surface-lighten-1;
     }
-
-    #add_channel_btn {
-        width: 100%;
-        border: none;
-        height: 3;
-    }
     """
 
     def __init__(self, **kwargs):
@@ -157,7 +206,6 @@ class Sidebar(Vertical):
     def compose(self) -> ComposeResult:
         yield Input(placeholder="Search contacts...", id="contact_search")
         yield ListView(id="sidebar_list")
-        yield Button("Add Channel (+)", id="add_channel_btn", variant="primary")
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "contact_search":
@@ -188,7 +236,7 @@ class Sidebar(Vertical):
         await list_view.clear()
 
         # Channels
-        await list_view.append(SidebarHeader("CHANNELS"))
+        await list_view.append(SidebarHeader("CHANNELS", show_controls=True))
         sorted_channels = sorted(self.all_channels, key=lambda x: x.get('channel_idx', 0))
         for ch in sorted_channels:
             name = ch.get("channel_name", "")
@@ -214,7 +262,7 @@ class Sidebar(Vertical):
 
         for key, name in all_candidates:
             c_id = f"contact_{key}"
-            item = ContactItem(name, id=c_id, favorite=(key in self.favorites))
+            item = ContactItem(name, id=c_id, favorite=(key in self.favorites), key=key)
             await list_view.append(item)
             if c_id in self.unread_counts:
                 item.unread_count = self.unread_counts[c_id]
@@ -296,6 +344,13 @@ class Sidebar(Vertical):
                 return item
             prev_index -= 1
         return None
+
+    def select_item(self, item_id: str):
+        list_view = self.query_one("#sidebar_list", ListView)
+        for i, child in enumerate(list_view.children):
+            if child.id == item_id:
+                list_view.index = i
+                return
 
     def select_next_unread(self):
         list_view = self.query_one("#sidebar_list", ListView)

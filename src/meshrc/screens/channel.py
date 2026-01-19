@@ -77,8 +77,8 @@ class ChannelScreen(ModalScreen):
             Label(title, id="title"),
             Label("Name:"),
             Input(value=self.initial_name, placeholder="Channel Name", id="name_input"),
-            # Placeholder for potential key/PSK inputs if needed by MeshCore
-            # For now, just name is critical based on Sidebar request
+            Label("Key:"),
+            Input(value=self.initial_key, placeholder="Channel Key (Optional)", id="key_input"),
             Vertical(*buttons, id="buttons"),
             id="dialog",
         )
@@ -86,7 +86,8 @@ class ChannelScreen(ModalScreen):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "save":
             name = self.query_one("#name_input", Input).value
-            self.dismiss({"name": name, "idx": self.channel_idx, "action": "save"})
+            key = self.query_one("#key_input", Input).value
+            self.dismiss({"name": name, "key": key, "idx": self.channel_idx, "action": "save"})
         elif event.button.id == "delete":
             self.dismiss({"idx": self.channel_idx, "action": "delete"})
         else:

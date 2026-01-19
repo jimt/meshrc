@@ -1,11 +1,12 @@
 import argparse
 import sys
 
+from . import __version__
 from .app import MeshrcApp
 
 
 def run():
-    parser = argparse.ArgumentParser(description="MeshRC")
+    parser = argparse.ArgumentParser(description=f"MeshRC {__version__}")
 
     parser.add_argument("-s", "--serial", help="Serial port (e.g. /dev/ttyUSB0)")
     parser.add_argument(

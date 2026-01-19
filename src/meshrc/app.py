@@ -4,6 +4,7 @@ import time
 
 from meshcore import MeshCore
 from textual.app import App, ComposeResult
+from textual.command import Provider
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import Button, Footer, Header, Input, Static
@@ -17,9 +18,17 @@ from .messages import (
 )
 from .screens.channel import ChannelScreen
 from .screens.settings import SettingsScreen
+from .screens.confirmation import ConfirmationScreen
 from .widgets.message_log import MessageLog
-from .widgets.sidebar import ContactItem, Sidebar
+from .widgets.message_log import MessageLog
+from .widgets.sidebar import ContactItem, Sidebar, SidebarHeader
+from .widgets.tabbar import TabBar
 
+
+class MessageInput(Input):
+    BINDINGS = [
+        ("ctrl+w", "app.close_tab", "Close Tab"),
+    ]
 
 class MeshrcApp(App):
     CSS = """
@@ -45,15 +54,16 @@ class MeshrcApp(App):
 
     BINDINGS = [
         ("ctrl+q", "quit", "Quit"),
-        ("ctrl+s", "settings", "Settings"),
-        ("+", "add_channel", "Add Channel"),
-        ("e", "edit_channel", "Edit Channel"),
-        ("delete", "delete_channel", "Delete Channel"),
-        ("f", "toggle_favorite", "Toggle Favorite"),
-        ("/", "focus_search", "Search Contacts"),
-        ("ctrl+n", "next_buffer", "Next Buffer"),
-        ("ctrl+p", "prev_buffer", "Prev Buffer"),
+        ("ctrl+o", "settings", "Settings"),
+        ("ctrl+a", "add_channel", "Add Ch"),
+        ("ctrl+e", "edit_channel", "Edit Ch"),
+        ("delete", "delete_channel", "Delete Ch"),
+        ("ctrl+f", "toggle_favorite", "Toggle Fav"),
+        ("ctrl+s", "focus_search", "Search Contacts"),
+        ("ctrl+n", "next_buffer", "Next"),
+        ("ctrl+p", "prev_buffer", "Prev"),
         ("alt+a", "next_active", "Next Active"),
+        ("ctrl+w", "close_tab", "Close Tab"),
     ]
 
     def __init__(self, connection_args, **kwargs):
@@ -68,11 +78,18 @@ class MeshrcApp(App):
     def compose(self) -> ComposeResult:
         yield Sidebar()
         with Vertical(id="main_content"):
-            yield Header()
+            yield TabBar(id="main_tabbar")
             with Vertical(id="message_container"):
                 yield MessageLog()
             yield Input(placeholder="Type a message...", id="message_input")
         yield Footer()
+
+    def get_system_commands(self, screen):
+        for cmd in super().get_system_commands(screen):
+            if cmd.title in ("Maximize", "Screenshot", "Grab screenshot"):
+                continue
+            yield cmd
+
 
     async def on_mount(self) -> None:
         self.title = "MeshRC"
@@ -136,14 +153,47 @@ class MeshrcApp(App):
             key = item.id.split("contact_")[1]
             asyncio.create_task(self.query_one(Sidebar).mark_recent(key))
 
+    def on_sidebar_header_add_channel(self, message: SidebarHeader.AddChannel) -> None:
+        self.action_add_channel()
+
+    def on_sidebar_header_delete_channel(self, message: SidebarHeader.DeleteChannel) -> None:
+        self.action_delete_channel()
+
+    def on_tab_bar_tab_selected(self, message: TabBar.TabSelected):
+         self._switch_context(message.tab_id)
+
+    def on_tab_bar_tab_closed(self, message: TabBar.TabClosed):
+         self._close_tab(message.tab_id)
+
+    def action_close_tab(self):
+        tab_id = self._get_active_id()
+        if tab_id:
+            self._close_tab(tab_id)
+
+    def _close_tab(self, tab_id):
+        # Remove from tab bar
+        tab_bar = self.query_one("#main_tabbar", TabBar)
+        tab_bar.remove_tab(tab_id)
+        
+        # If it was active, switch to another or clear
+        if self._get_active_id() == tab_id:
+            # Simple heuristic: switch to first remaining tab, or clear
+            # Or ask sidebar to select next?
+            # For now, clear.
+            self.active_recipient = None
+            self.active_recipient_type = None
+            self.query_one(MessageLog).clear()
+            # Try to activate another tab if available
+            # ... (omitted for brevity, could rely on defaults)
+
     def action_add_channel(self):
         def handle_add(data):
             if data and data.get("action") == "save" and data.get("name"):
-                asyncio.create_task(self._add_channel(data["name"]))
+                asyncio.create_task(self._add_channel(data["name"], data.get("key")))
 
         self.push_screen(ChannelScreen(), handle_add)
 
-    async def _add_channel(self, name):
+    async def _add_channel(self, name, key=None):
         # Find next available index or use standard add command if available
         # Assuming simple set_channel on next available slot for now, or just slot 0 if empty
         # Real MeshCore logic might be more complex
@@ -158,9 +208,12 @@ class MeshrcApp(App):
             idx = len(self.mc.channels)
 
         try:
-            # mc.commands.set_channel(index, name)
-            # We assume set_channel takes (index, name) based on previous analysis
-            await self.mc.commands.set_channel(idx, name)
+            # mc.commands.set_channel(index, name, key)
+            if key:
+                await self.mc.commands.set_channel(idx, name, key)
+            else:
+                await self.mc.commands.set_channel(idx, name)
+            
             self.notify(f"Added channel {name}")
             # Refresh channels
             await self.client.fetch_initial_data()
@@ -184,7 +237,7 @@ class MeshrcApp(App):
             if not data:
                 return
             if data.get("action") == "save" and data.get("name"):
-                asyncio.create_task(self._edit_channel(data["idx"], data["name"]))
+                asyncio.create_task(self._edit_channel(data["idx"], data["name"], data.get("key")))
             elif data.get("action") == "delete":
                 asyncio.create_task(self._delete_channel(data["idx"]))
 
@@ -193,20 +246,31 @@ class MeshrcApp(App):
             handle_edit,
         )
 
-    async def _edit_channel(self, idx, name):
+    async def _edit_channel(self, idx, name, key=None):
         try:
-            await self.mc.commands.set_channel(idx, name)
+            if key:
+                await self.mc.commands.set_channel(idx, name, key)
+            else:
+                await self.mc.commands.set_channel(idx, name)
+            
             self.notify(f"Updated channel {idx} to {name}")
             await self.client.fetch_initial_data()
         except Exception as e:
             self.notify(f"Failed to edit channel: {e}", severity="error")
 
-    def action_delete_channel(self):
+    async def action_delete_channel(self):
         if self.active_recipient_type != "channel" or self.active_recipient is None:
             self.notify("Select a channel to delete", severity="warning")
             return
 
-        asyncio.create_task(self._delete_channel(self.active_recipient))
+        def handle_confirm(confirm):
+            if confirm:
+                asyncio.create_task(self._delete_channel(self.active_recipient))
+
+        self.push_screen(
+            ConfirmationScreen(f"Are you sure you want to delete channel {self.active_recipient}?"),
+            handle_confirm
+        )
 
     async def _delete_channel(self, idx):
         try:
@@ -250,9 +314,14 @@ class MeshrcApp(App):
         current_active_id = self._get_active_id()
         if current_active_id == context_id:
             self.query_one(MessageLog).add_message(sender, content, timestamp)
+        current_active_id = self._get_active_id()
+        if current_active_id == context_id:
+            self.query_one(MessageLog).add_message(sender, content, timestamp)
         else:
-            # Increment badge
+            # Increment badge on sidebar AND tab
             self.query_one(Sidebar).increment_unread(context_id)
+            count = self.query_one(Sidebar).unread_counts.get(context_id, 0)
+            self.query_one("#main_tabbar", TabBar).set_unread(context_id, count)
 
     def _log_message(self, msg_data: dict):
         log_file = self.connection_args.get("log_file")
@@ -324,15 +393,20 @@ class MeshrcApp(App):
 
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "add_channel_btn":
-            self.action_add_channel()
+        # if event.button.id == "add_channel_btn":
+        #    self.action_add_channel()
+        pass
 
     def _switch_context(self, item_id: str):
         if not item_id:
             return
 
+        # Sync Sidebar Selection
+        self.query_one(Sidebar).select_item(item_id)
+
         # Clear unread
         self.query_one(Sidebar).clear_unread(item_id)
+        self.query_one("#main_tabbar", TabBar).set_unread(item_id, 0)
 
         # Parse ID
         if item_id.startswith("chan_"):
@@ -342,10 +416,29 @@ class MeshrcApp(App):
             self.active_recipient_type = "contact"
             self.active_recipient = item_id.split("_")[1]
 
-        # Update Header
-        self.query_one(
-            Header
-        ).title = f"MeshRC - {self.active_recipient_type}: {self.active_recipient}"  # Improve name display
+        # Update TabBar
+        name = item_id # Fallback
+        
+        # Get decent name
+        if self.active_recipient_type == "channel":
+             if hasattr(self.mc, "channels"):
+                 for ch in self.mc.channels:
+                      if ch.get("channel_idx") == self.active_recipient:
+                           name = ch.get("channel_name", str(self.active_recipient))
+                           break
+        elif self.active_recipient_type == "contact":
+             contact = self.mc.get_contact_by_key_prefix(self.active_recipient)
+             if contact:
+                  name = contact.get("adv_name", self.active_recipient[:8])
+        
+        tab_bar = self.query_one("#main_tabbar", TabBar)
+        tab_bar.add_tab(item_id, name)
+        tab_bar.activate_tab(item_id)
+
+        # Header removed
+        # self.query_one(
+        #     Header
+        # ).title = f"MeshRC - {self.active_recipient_type}: {self.active_recipient}"  # Improve name display
 
         # Reload Log
         log = self.query_one(MessageLog)
